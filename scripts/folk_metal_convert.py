@@ -110,8 +110,11 @@ def load_img2img(checkpoint: str, device: str, scheduler: str) -> StableDiffusio
         checkpoint,
         revision="main",
         torch_dtype=dtype,
-        safety_checker=lambda images, **kwargs: (images, False),
+        safety_checker=None,
     ).to(device)
+    pipeline.safety_checker = None
+    if hasattr(pipeline, "feature_extractor"):
+        pipeline.feature_extractor = None
     pipeline.scheduler = get_scheduler(scheduler, config=pipeline.scheduler.config)
     return pipeline
 

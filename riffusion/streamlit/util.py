@@ -69,8 +69,11 @@ def load_stable_diffusion_pipeline(
         checkpoint,
         revision="main",
         torch_dtype=dtype,
-        safety_checker=lambda images, **kwargs: (images, False),
+        safety_checker=None,
     ).to(device)
+    pipeline.safety_checker = None
+    if hasattr(pipeline, "feature_extractor"):
+        pipeline.feature_extractor = None
 
     pipeline.scheduler = get_scheduler(scheduler, config=pipeline.scheduler.config)
 
@@ -137,8 +140,12 @@ def load_stable_diffusion_img2img_pipeline(
         checkpoint,
         revision="main",
         torch_dtype=dtype,
-        safety_checker=lambda images, **kwargs: (images, False),
+        safety_checker=None,
     ).to(device)
+    # Disable NSFW checker — the dummy lambda still ran feature_extractor and crashed.
+    pipeline.safety_checker = None
+    if hasattr(pipeline, "feature_extractor"):
+        pipeline.feature_extractor = None
 
     pipeline.scheduler = get_scheduler(scheduler, config=pipeline.scheduler.config)
 
