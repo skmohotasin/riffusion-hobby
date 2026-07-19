@@ -10,8 +10,11 @@ def check_device(device: str, backup: str = "cpu") -> str:
     """
     cuda_not_found = device.lower().startswith("cuda") and not torch.cuda.is_available()
     mps_not_found = device.lower().startswith("mps") and not torch.backends.mps.is_available()
+    xpu_not_found = device.lower().startswith("xpu") and not (
+        hasattr(torch, "xpu") and torch.xpu.is_available()
+    )
 
-    if cuda_not_found or mps_not_found:
+    if cuda_not_found or mps_not_found or xpu_not_found:
         warnings.warn(f"WARNING: {device} is not available, using {backup} instead.", stacklevel=3)
         return backup
 

@@ -42,6 +42,13 @@ class SpectrogramConverter:
                 stacklevel=2,
             )
             self.device = "cpu"
+        elif device.lower().startswith("xpu"):
+            # Keep spectrogram math on CPU for broader torchaudio op coverage on Intel GPUs.
+            warnings.warn(
+                "WARNING: Using CPU for spectrogram audio ops with XPU diffusion device",
+                stacklevel=2,
+            )
+            self.device = "cpu"
 
         # https://pytorch.org/audio/stable/generated/torchaudio.transforms.Spectrogram.html
         self.spectrogram_func = torchaudio.transforms.Spectrogram(
@@ -84,19 +91,30 @@ class SpectrogramConverter:
         ).to(self.device)
 
         # https://pytorch.org/audio/stable/generated/torchaudio.transforms.InverseMelScale.html
-        self.inverse_mel_scaler = torchaudio.transforms.InverseMelScale(
+        # torchaudio>=2.1 dropped max_iter / tolerance_* / sgdargs in favor of `driver`.
+        inverse_mel_kwargs = dict(
             n_stft=params.n_fft // 2 + 1,
             n_mels=params.num_frequencies,
             sample_rate=params.sample_rate,
             f_min=params.min_frequency,
             f_max=params.max_frequency,
-            max_iter=params.max_mel_iters,
-            tolerance_loss=1e-5,
-            tolerance_change=1e-8,
-            sgdargs=None,
             norm=params.mel_scale_norm,
             mel_scale=params.mel_scale_type,
-        ).to(self.device)
+        )
+        try:
+            self.inverse_mel_scaler = torchaudio.transforms.InverseMelScale(
+                **inverse_mel_kwargs,
+                max_iter=params.max_mel_iters,
+                tolerance_loss=1e-5,
+                tolerance_change=1e-8,
+                sgdargs=None,
+            )
+        except TypeError:
+            self.inverse_mel_scaler = torchaudio.transforms.InverseMelScale(
+                **inverse_mel_kwargs,
+                driver="gels",
+            )
+        self.inverse_mel_scaler = self.inverse_mel_scaler.to(self.device)
 
     def spectrogram_from_audio(
         self,

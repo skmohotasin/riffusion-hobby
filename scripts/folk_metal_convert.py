@@ -28,6 +28,7 @@ from riffusion.audio_splitter import split_audio
 from riffusion.spectrogram_image_converter import SpectrogramImageConverter
 from riffusion.spectrogram_params import SpectrogramParams
 from riffusion.streamlit.util import get_scheduler
+from riffusion.util import audio_util
 
 
 DEFAULT_CHECKPOINT = "riffusion/riffusion-model-v1"
@@ -100,7 +101,7 @@ def stitch_clips(
 ) -> pydub.AudioSegment:
     if len(clips) == 1:
         return clips[0]
-    return clips[0].append(clips[1:], crossfade=overlap_ms)
+    return audio_util.stitch_segments(clips, crossfade_s=overlap_ms / 1000.0)
 
 
 def load_img2img(checkpoint: str, device: str, scheduler: str) -> StableDiffusionImg2ImgPipeline:
@@ -145,13 +146,14 @@ def style_transfer_segment(
         output = pipeline(
             prompt=prompt,
             negative_prompt=negative_prompt or None,
-            image=init_resized,
+            init_image=init_resized,
             strength=denoising,
             guidance_scale=guidance,
             num_inference_steps=steps,
             generator=generator,
         )
-        image = output.images[0].resize(init_image.size, Image.BICUBIC)
+        result_image = output["images"][0] if isinstance(output, dict) else output.images[0]
+        image = result_image.resize(init_image.size, Image.BICUBIC)
         styled.append(converter.audio_from_spectrogram_image(image))
 
     return stitch_clips(styled, overlap_ms)[: len(segment)]
@@ -205,8 +207,22 @@ def main() -> None:
     print(f"Loading audio: {args.input}")
     original = load_audio(args.input)
 
-    print("Splitting stems with Demucs (this can take a while)...")
-    stems = split_audio(original, model_name="htdemucs", extension="wav", device=args.demucs_device)
+    stems_dir = out.parent / f"{args.input.stem}_stems"
+    if stems_dir.exists() and all((stems_dir / f"{n}.wav").exists() for n in ("vocals", "drums", "bass", "other")):
+        print(f"Loading cached stems from {stems_dir}")
+        stems = {
+            name: pydub.AudioSegment.from_wav(stems_dir / f"{name}.wav")
+            for name in ("vocals", "drums", "bass", "other")
+        }
+    else:
+        print("Splitting stems with Demucs (this can take a while)...")
+        stems = split_audio(
+            original, model_name="htdemucs", extension="wav", device=args.demucs_device
+        )
+        stems_dir.mkdir(parents=True, exist_ok=True)
+        for name, stem in stems.items():
+            stem.export(stems_dir / f"{name}.wav", format="wav")
+        print(f"Cached stems to {stems_dir}")
     print(f"Stems: {sorted(stems)}")
 
     vocals = stems.get("vocals")
