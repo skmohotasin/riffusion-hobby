@@ -92,8 +92,9 @@ def render() -> None:
         streamlit_util.display_and_download_audio(recombined, output_name, extension=extension)
 
 
-@st.cache
+@st.cache_data
 def split_audio_cached(
-    segment: pydub.AudioSegment, device: str = "cuda"
+    _segment: pydub.AudioSegment, device: str = "cuda"
 ) -> T.Dict[str, pydub.AudioSegment]:
-    return split_audio(segment, device=device)
+    # Leading underscore skips hashing; AudioSegment is unhashable in modern Streamlit.
+    return split_audio(_segment, device=device)

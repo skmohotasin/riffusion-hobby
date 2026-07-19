@@ -78,6 +78,9 @@ def stitch_segments(
     """
     Stitch together a sequence of audio segments with a crossfade between each segment.
     """
+    if not segments:
+        raise ValueError("No audio segments to stitch")
+
     crossfade_ms = int(crossfade_s * 1000)
     combined_segment = segments[0]
     for segment in segments[1:]:

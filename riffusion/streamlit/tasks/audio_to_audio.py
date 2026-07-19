@@ -96,9 +96,25 @@ def render() -> None:
     clip_duration_s = clip_p["clip_duration_s"]
     overlap_duration_s = clip_p["overlap_duration_s"]
 
-    duration_s = min(clip_p["duration_s"], segment.duration_seconds - start_time_s)
+    remaining_s = max(0.0, segment.duration_seconds - start_time_s)
+    duration_s = min(clip_p["duration_s"], remaining_s)
+    if duration_s <= 0:
+        st.error("No audio available after Start Time. Lower Start Time or use a longer track.")
+        return
+
+    # Clip length cannot exceed the selected duration
+    clip_duration_s = min(clip_duration_s, duration_s)
+    overlap_duration_s = min(overlap_duration_s, max(0.0, clip_duration_s - 0.01))
     increment_s = clip_duration_s - overlap_duration_s
-    clip_start_times = start_time_s + np.arange(0, duration_s - clip_duration_s, increment_s)
+
+    # Include a final start so Duration == Clip Duration still yields one clip
+    if duration_s <= clip_duration_s:
+        clip_start_times = np.array([start_time_s], dtype=float)
+    else:
+        clip_start_times = start_time_s + np.arange(0, duration_s - clip_duration_s, increment_s)
+        last_start = start_time_s + duration_s - clip_duration_s
+        if len(clip_start_times) == 0 or clip_start_times[-1] + 1e-6 < last_start:
+            clip_start_times = np.append(clip_start_times, last_start)
 
     write_clip_details(
         clip_start_times=clip_start_times,
@@ -321,6 +337,13 @@ def render() -> None:
             st.audio(audio_bytes)
 
     # Combine clips with a crossfade based on overlap
+    if not result_segments:
+        st.error(
+            "No audio clips were generated. Set Duration [s] to at least the Clip Duration "
+            f"({clip_duration_s:.1f}s), then press Riff again."
+        )
+        return
+
     combined_segment = audio_util.stitch_segments(result_segments, crossfade_s=overlap_duration_s)
 
     st.write(f"#### Final Audio ({combined_segment.duration_seconds}s)")

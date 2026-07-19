@@ -192,12 +192,12 @@ def spectrogram_image_converter(
     return SpectrogramImageConverter(params=params, device=device)
 
 
-@st.cache
 def spectrogram_image_from_audio(
     segment: pydub.AudioSegment,
     params: SpectrogramParams,
     device: str = "cuda",
 ) -> Image.Image:
+    # Not cached: pydub.AudioSegment is unhashable for Streamlit cache keys.
     converter = spectrogram_image_converter(params=params, device=device)
     return converter.spectrogram_image_from_audio(segment)
 
@@ -230,23 +230,28 @@ def audio_bytes_from_spectrogram_image(
 def select_device(container: T.Any = st.sidebar) -> str:
     """
     Dropdown to select a torch device, with an intelligent default.
+    Only lists devices that are actually available on this machine.
     """
+    device_options: T.List[str] = ["cpu"]
     default_device = "cpu"
-    device_options = ["cuda", "cpu", "mps"]
 
-    if torch.cuda.is_available():
-        default_device = "cuda"
-    elif hasattr(torch, "xpu") and torch.xpu.is_available():
+    # CUDA omitted when unavailable (this PC uses Intel Arc XPU / CPU).
+    # if torch.cuda.is_available():
+    #     device_options.insert(0, "cuda")
+    #     default_device = "cuda"
+
+    if hasattr(torch, "xpu") and torch.xpu.is_available():
+        device_options.insert(0, "xpu")
         default_device = "xpu"
-        device_options = ["xpu", "cpu", "cuda", "mps"]
     elif torch.backends.mps.is_available():
+        device_options.insert(0, "mps")
         default_device = "mps"
 
     device = st.sidebar.selectbox(
         "Device",
         options=device_options,
         index=device_options.index(default_device),
-        help="Which compute device to use. CUDA is recommended; XPU for Intel Arc.",
+        help="Compute device. XPU = Intel Arc GPU; CPU is slower.",
     )
     assert device is not None
 
