@@ -15,6 +15,16 @@ __pycache__/
 # Random stuff I don't care about
 .graveyard/
 
+# Local audio uploads / conversion outputs (do not commit)
+input/
+output/
+*.mp3
+*.wav
+*.flac
+*.m4a
+*.ogg
+!test/test_data/**
+
 # Distribution / packaging
 .Python
 build/
