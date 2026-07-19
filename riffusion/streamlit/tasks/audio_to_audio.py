@@ -91,7 +91,10 @@ def render() -> None:
         segment = segment.set_frame_rate(44100)
     st.write(f"Duration: {segment.duration_seconds:.2f}s, Sample Rate: {segment.frame_rate}Hz")
 
-    clip_p = get_clip_params()
+    clip_p = get_clip_params(
+        track_duration_s=segment.duration_seconds,
+        track_key=Path(audio_file.name).stem,
+    )
     start_time_s = clip_p["start_time_s"]
     clip_duration_s = clip_p["clip_duration_s"]
     overlap_duration_s = clip_p["overlap_duration_s"]
@@ -353,7 +356,11 @@ def render() -> None:
     streamlit_util.display_and_download_audio(combined_segment, output_name, extension=extension)
 
 
-def get_clip_params(advanced: bool = False) -> T.Dict[str, T.Any]:
+def get_clip_params(
+    advanced: bool = False,
+    track_duration_s: T.Optional[float] = None,
+    track_key: str = "default",
+) -> T.Dict[str, T.Any]:
     """
     Render the parameters of slicing audio into clips.
     """
@@ -361,15 +368,26 @@ def get_clip_params(advanced: bool = False) -> T.Dict[str, T.Any]:
 
     cols = st.columns(4)
 
+    default_duration = float(track_duration_s) if track_duration_s is not None else 20.0
+
     p["start_time_s"] = cols[0].number_input(
         "Start Time [s]",
         min_value=0.0,
         value=0.0,
+        key=f"start_time_s_{track_key}",
+        help="Where to begin processing in the track",
     )
     p["duration_s"] = cols[1].number_input(
         "Duration [s]",
         min_value=0.0,
-        value=20.0,
+        value=round(default_duration, 2),
+        key=f"duration_s_{track_key}",
+        help=(
+            f"How much of the track to process. Pre-filled with full track length "
+            f"({default_duration:.2f}s)."
+            if track_duration_s is not None
+            else "How much of the track to process"
+        ),
     )
 
     if advanced:
