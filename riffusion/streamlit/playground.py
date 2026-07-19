@@ -1,10 +1,11 @@
+import gc
+import os
 import sys
 
 import streamlit as st
 import streamlit.web.cli as stcli
+import torch
 from streamlit import runtime
-
-from riffusion.streamlit import util as streamlit_util
 
 PAGES = {
     "🎛️ Home": "tasks.home",
@@ -16,6 +17,38 @@ PAGES = {
     "📎 Sample Clips": "tasks.sample_clips",
     "␧ Spectrogram to Audio": "tasks.image_to_audio",
 }
+
+
+def stop_everything_and_free_gpu() -> None:
+    """Clear caches, free GPU/XPU memory, and exit the server process."""
+    try:
+        st.cache_data.clear()
+    except Exception:
+        pass
+    try:
+        st.cache_resource.clear()
+    except Exception:
+        pass
+
+    gc.collect()
+
+    if hasattr(torch, "xpu") and torch.xpu.is_available():
+        try:
+            torch.xpu.empty_cache()
+            torch.xpu.synchronize()
+        except Exception:
+            pass
+
+    if torch.cuda.is_available():
+        try:
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        except Exception:
+            pass
+
+    gc.collect()
+    # Exit so the process fully releases the GPU
+    os._exit(0)
 
 
 def render() -> None:
@@ -35,7 +68,7 @@ def render() -> None:
             use_container_width=True,
         ):
             st.warning("Stopping… freeing GPU…")
-            streamlit_util.stop_everything_and_free_gpu()
+            stop_everything_and_free_gpu()
 
     with st.sidebar:
         st.markdown("### Session")
@@ -46,7 +79,7 @@ def render() -> None:
             use_container_width=True,
         ):
             st.warning("Stopping… freeing GPU…")
-            streamlit_util.stop_everything_and_free_gpu()
+            stop_everything_and_free_gpu()
 
     page = st.sidebar.selectbox("Page", list(PAGES.keys()))
     assert page is not None
