@@ -1,7 +1,9 @@
 """
 Streamlit utilities (mostly cached wrappers around riffusion code).
 """
+import gc
 import io
+import os
 import threading
 import typing as T
 
@@ -31,6 +33,48 @@ SCHEDULER_OPTIONS = [
     "EulerDiscreteScheduler",
     "EulerAncestralDiscreteScheduler",
 ]
+
+
+def free_gpu_memory() -> None:
+    """
+    Drop cached models and release GPU / XPU memory as far as possible.
+    """
+    try:
+        st.cache_data.clear()
+    except Exception:
+        pass
+    try:
+        st.cache_resource.clear()
+    except Exception:
+        pass
+
+    gc.collect()
+
+    if hasattr(torch, "xpu") and torch.xpu.is_available():
+        try:
+            torch.xpu.empty_cache()
+            torch.xpu.synchronize()
+        except Exception:
+            pass
+
+    if torch.cuda.is_available():
+        try:
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        except Exception:
+            pass
+
+    gc.collect()
+
+
+def stop_everything_and_free_gpu() -> None:
+    """
+    Clear caches, free GPU memory, then exit the Streamlit server process.
+    Closing the browser tab alone does not free the GPU — this does.
+    """
+    free_gpu_memory()
+    # Hard-exit so the python process releases the XPU/CUDA context fully.
+    os._exit(0)
 
 
 @st.cache_resource
@@ -126,6 +170,7 @@ def load_stable_diffusion_img2img_pipeline(
     device: str = "cuda",
     dtype: torch.dtype = torch.float16,
     scheduler: str = SCHEDULER_OPTIONS[0],
+    _cache_bust: int = 3,
 ) -> StableDiffusionImg2ImgPipeline:
     """
     Load the image to image pipeline.
@@ -367,7 +412,6 @@ def run_img2img_magic_mix(
         )
 
 
-@st.cache_data
 def run_img2img(
     prompt: str,
     init_image: Image.Image,
@@ -381,6 +425,9 @@ def run_img2img(
     scheduler: str = SCHEDULER_OPTIONS[0],
     _progress_callback: T.Optional[T.Callable[[float], T.Any]] = None,
 ) -> Image.Image:
+    """
+    Run img2img. Not cached — Streamlit cache was returning bad/empty results.
+    """
     with pipeline_lock():
         pipeline = load_stable_diffusion_img2img_pipeline(
             checkpoint=checkpoint,
@@ -388,44 +435,73 @@ def run_img2img(
             scheduler=scheduler,
         )
 
-        generator_device = "cpu" if device.lower().startswith("mps") else device
-        generator = torch.Generator(device=generator_device).manual_seed(seed)
+        # Ensure safety checker stays off (stale cached pipelines may still have one)
+        pipeline.safety_checker = None
+        if hasattr(pipeline, "feature_extractor"):
+            pipeline.feature_extractor = None
+
+        def _noop_safety_checker(image, device, dtype):
+            return image, None
+
+        pipeline.run_safety_checker = _noop_safety_checker  # type: ignore[method-assign]
+
+        # XPU requires an XPU generator; MPS is safest on CPU
+        if device.lower().startswith("mps"):
+            generator_device = "cpu"
+        else:
+            generator_device = device
+        generator = torch.Generator(device=generator_device).manual_seed(int(seed))
+
+        if init_image.mode != "RGB":
+            init_image = init_image.convert("RGB")
 
         num_expected_steps = max(int(num_inference_steps * denoising_strength), 1)
 
-        def callback(step: int, tensor: torch.Tensor, foo: T.Any) -> None:
+        def callback(step: int, timestep: T.Any, latents: torch.Tensor) -> None:
             if _progress_callback is not None:
-                _progress_callback(step / num_expected_steps)
+                try:
+                    _progress_callback(min(max(step / num_expected_steps, 0.0), 1.0))
+                except Exception:
+                    pass
 
-        # diffusers 0.9 uses init_image=; newer versions use image=
-        try:
-            result = pipeline(
-                prompt=prompt,
-                init_image=init_image,
-                strength=denoising_strength,
-                num_inference_steps=num_inference_steps,
-                guidance_scale=guidance_scale,
-                negative_prompt=negative_prompt or None,
-                num_images_per_prompt=1,
-                generator=generator,
-                callback=callback,
-                callback_steps=1,
-            )
-        except TypeError:
-            result = pipeline(
-                prompt=prompt,
-                image=init_image,
-                strength=denoising_strength,
-                num_inference_steps=num_inference_steps,
-                guidance_scale=guidance_scale,
-                negative_prompt=negative_prompt or None,
-                num_images_per_prompt=1,
-                generator=generator,
-                callback=callback,
-                callback_steps=1,
+        call_kwargs = dict(
+            prompt=prompt,
+            strength=float(denoising_strength),
+            num_inference_steps=int(num_inference_steps),
+            guidance_scale=float(guidance_scale),
+            negative_prompt=negative_prompt or None,
+            num_images_per_prompt=1,
+            generator=generator,
+            callback=callback,
+            callback_steps=1,
+            output_type="pil",
+            return_dict=True,
+        )
+
+        # diffusers 0.9 uses init_image=; newer uses image=
+        import inspect
+
+        sig = inspect.signature(pipeline.__call__)
+        if "init_image" in sig.parameters:
+            call_kwargs["init_image"] = init_image
+        else:
+            call_kwargs["image"] = init_image
+
+        result = pipeline(**call_kwargs)
+
+        if hasattr(result, "images"):
+            images = result.images
+        elif isinstance(result, (tuple, list)):
+            images = result[0]
+        else:
+            images = result["images"]
+
+        if not images:
+            raise RuntimeError(
+                "img2img returned no images. Try Clear cache in the Streamlit menu, "
+                "restart the playground, and run again."
             )
 
-        images = result["images"] if isinstance(result, dict) else result.images
         return images[0]
 
 
