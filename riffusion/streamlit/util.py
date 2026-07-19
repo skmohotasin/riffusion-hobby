@@ -298,8 +298,9 @@ def select_checkpoint(container: T.Any = st.sidebar) -> str:
 
 
 @st.cache_data
-def load_audio_file(audio_file: io.BytesIO) -> pydub.AudioSegment:
-    return pydub.AudioSegment.from_file(audio_file)
+def load_audio_file(_audio_file: io.BytesIO) -> pydub.AudioSegment:
+    _audio_file.seek(0)
+    return pydub.AudioSegment.from_file(_audio_file)
 
 
 @st.cache_resource
@@ -453,11 +454,12 @@ def display_and_download_audio(
     mime_type = f"audio/{extension}"
     audio_bytes = io.BytesIO()
     segment.export(audio_bytes, format=extension)
-    st.audio(audio_bytes, format=mime_type)
+    payload = audio_bytes.getvalue()
 
+    st.audio(payload, format=mime_type)
     st.download_button(
         f"{name}.{extension}",
-        data=audio_bytes,
+        data=payload,
         file_name=f"{name}.{extension}",
         mime=mime_type,
     )

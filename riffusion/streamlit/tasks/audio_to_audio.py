@@ -80,15 +80,18 @@ def render() -> None:
         st.info("Upload audio to get started")
         return
 
-    st.write("#### Original")
-    st.audio(audio_file)
-
     segment = streamlit_util.load_audio_file(audio_file)
 
     # TODO(hayk): Fix
     if segment.frame_rate != 44100:
         st.warning("Audio must be 44100Hz. Converting")
         segment = segment.set_frame_rate(44100)
+
+    st.write("#### Original")
+    # Export fresh bytes so the player always gets a valid buffer
+    original_preview = io.BytesIO()
+    segment.export(original_preview, format="mp3")
+    st.audio(original_preview.getvalue(), format="audio/mp3")
     st.write(f"Duration: {segment.duration_seconds:.2f}s, Sample Rate: {segment.frame_rate}Hz")
 
     clip_p = get_clip_params(
@@ -247,7 +250,7 @@ def render() -> None:
 
             left.write("##### Source Clip")
             left.image(init_image, use_column_width=False)
-            left.audio(audio_bytes)
+            left.audio(audio_bytes.getvalue(), format="audio/wav")
 
             right.write("##### Riffed Clip")
             empty_bin = right.empty()
@@ -322,7 +325,7 @@ def render() -> None:
         riffed_segment.export(audio_bytes, format="wav")
 
         if show_clip_details:
-            right.audio(audio_bytes)
+            right.audio(audio_bytes.getvalue(), format="audio/wav")
 
         if show_clip_details and show_difference:
             diff_np = np.maximum(
@@ -337,7 +340,7 @@ def render() -> None:
 
             audio_bytes = io.BytesIO()
             diff_segment.export(audio_bytes, format=extension)
-            st.audio(audio_bytes)
+            st.audio(audio_bytes.getvalue(), format=f"audio/{extension}")
 
     # Combine clips with a crossfade based on overlap
     if not result_segments:
