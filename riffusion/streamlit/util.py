@@ -61,7 +61,7 @@ def load_stable_diffusion_pipeline(
 
     TODO(hayk): Merge this into RiffusionPipeline to just load one model.
     """
-    if device == "cpu" or device.lower().startswith("mps"):
+    if device == "cpu" or device.lower().startswith("mps") or device == "xpu":
         print(f"WARNING: Falling back to float32 on {device}, float16 is unsupported")
         dtype = torch.float32
 
@@ -129,7 +129,7 @@ def load_stable_diffusion_img2img_pipeline(
 
     TODO(hayk): Merge this into RiffusionPipeline to just load one model.
     """
-    if device == "cpu" or device.lower().startswith("mps"):
+    if device == "cpu" or device.lower().startswith("mps") or device == "xpu":
         print(f"WARNING: Falling back to float32 on {device}, float16 is unsupported")
         dtype = torch.float32
 
@@ -232,17 +232,21 @@ def select_device(container: T.Any = st.sidebar) -> str:
     Dropdown to select a torch device, with an intelligent default.
     """
     default_device = "cpu"
+    device_options = ["cuda", "cpu", "mps"]
+
     if torch.cuda.is_available():
         default_device = "cuda"
+    elif hasattr(torch, "xpu") and torch.xpu.is_available():
+        default_device = "xpu"
+        device_options = ["xpu", "cpu", "cuda", "mps"]
     elif torch.backends.mps.is_available():
         default_device = "mps"
 
-    device_options = ["cuda", "cpu", "mps"]
     device = st.sidebar.selectbox(
         "Device",
         options=device_options,
         index=device_options.index(default_device),
-        help="Which compute device to use. CUDA is recommended.",
+        help="Which compute device to use. CUDA is recommended; XPU for Intel Arc.",
     )
     assert device is not None
 
