@@ -7,6 +7,7 @@ import pydub
 import streamlit as st
 from PIL import Image
 
+from riffusion.audio_splitter import split_audio
 from riffusion.datatypes import InferenceInput, PromptInput
 from riffusion.spectrogram_params import SpectrogramParams
 from riffusion.streamlit import util as streamlit_util
@@ -128,16 +129,38 @@ def render() -> None:
         overlap_duration_s=overlap_duration_s,
     )
 
+    instruments_only = st.checkbox(
+        "Instruments only (keep original vocals + drums)",
+        value=True,
+        help="Splits the track with Demucs, restyles bass/other only, then remixes "
+        "your original vocals and drums back on top. Best for metal style changes.",
+    )
+    keep_drums = True
+    if instruments_only:
+        interpolate = False
+        keep_drums = st.checkbox(
+            "Keep original drums (rhythm lock)",
+            value=True,
+            help="Leave on to preserve rhythm. Turn off to also restyle drums.",
+        )
+        st.info(
+            "Instruments-only mode: vocals"
+            + (" + drums" if keep_drums else "")
+            + " stay original; guitars/bass/other follow your prompt. "
+            "Use denoising ~0.35–0.45."
+        )
+
     interpolate = st.checkbox(
         "Interpolate between two endpoints",
         value=False,
         help="Interpolate between two prompts, seeds, or denoising values along the"
         "duration of the segment",
+        disabled=instruments_only,
     )
 
     counter = streamlit_util.StreamlitCounter()
 
-    denoising_default = 0.55
+    denoising_default = 0.38 if instruments_only else 0.55
     with st.form("audio to audio form"):
         if interpolate:
             left, right = st.columns(2)
@@ -192,12 +215,6 @@ def render() -> None:
     show_clip_details = st.sidebar.checkbox("Show Clip Details", True)
     show_difference = st.sidebar.checkbox("Show Difference", False)
 
-    clip_segments = slice_audio_into_clips(
-        segment=segment,
-        clip_start_times=clip_start_times,
-        clip_duration_s=clip_duration_s,
-    )
-
     if not prompt_input_a.prompt:
         st.info("Enter a prompt")
         return
@@ -206,6 +223,47 @@ def render() -> None:
         return
 
     st.write(f"## Counter: {counter.value}")
+
+    # Optional: lock vocals/drums via stem split, restyle instruments only
+    locked_vocals: T.Optional[pydub.AudioSegment] = None
+    locked_drums: T.Optional[pydub.AudioSegment] = None
+    if instruments_only:
+        start_ms = int(start_time_s * 1000)
+        end_ms = int((start_time_s + duration_s) * 1000)
+        work = segment[start_ms:end_ms]
+        st.write("#### Splitting stems (vocals / drums / bass / other)…")
+        stems = split_audio_for_instruments(work, device="cpu")
+        st.write(f"Stems: {', '.join(sorted(stems))}")
+
+        locked_vocals = stems.get("vocals")
+        locked_drums = stems.get("drums") if keep_drums else None
+        parts = []
+        if stems.get("other") is not None:
+            parts.append(stems["other"])
+        if stems.get("bass") is not None:
+            parts.append(stems["bass"])
+        if not keep_drums and stems.get("drums") is not None:
+            parts.append(stems["drums"])
+        if not parts:
+            st.error("Could not build an instrumental stem from the split.")
+            return
+        instrumental = parts[0]
+        for part in parts[1:]:
+            instrumental = instrumental.overlay(part)
+
+        # Style-transfer clips are taken from the instrumental only
+        segment = instrumental
+        clip_start_times = np.array(
+            [t - start_time_s for t in clip_start_times], dtype=float
+        )
+        start_time_s = 0.0
+        st.write("Restyling instruments only; original vocals/drums will be remixed after.")
+
+    clip_segments = slice_audio_into_clips(
+        segment=segment,
+        clip_start_times=clip_start_times,
+        clip_duration_s=clip_duration_s,
+    )
 
     if use_20k:
         params = SpectrogramParams(
@@ -352,10 +410,31 @@ def render() -> None:
 
     combined_segment = audio_util.stitch_segments(result_segments, crossfade_s=overlap_duration_s)
 
+    if instruments_only and locked_vocals is not None:
+        st.write("#### Remixing original vocals" + (" + drums" if locked_drums else ""))
+        target_ms = len(combined_segment)
+
+        def _match(seg: pydub.AudioSegment) -> pydub.AudioSegment:
+            if len(seg) > target_ms:
+                return seg[:target_ms]
+            if len(seg) < target_ms:
+                return seg + pydub.AudioSegment.silent(
+                    duration=target_ms - len(seg), frame_rate=seg.frame_rate
+                )
+            return seg
+
+        parts = [_match(combined_segment), _match(locked_vocals)]
+        if locked_drums is not None:
+            parts.append(_match(locked_drums))
+        combined_segment = parts[0]
+        for part in parts[1:]:
+            combined_segment = combined_segment.overlay(part)
+
     st.write(f"#### Final Audio ({combined_segment.duration_seconds}s)")
 
     input_name = Path(audio_file.name).stem
-    output_name = f"{input_name}_{prompt_input_a.prompt.replace(' ', '_')}"
+    mode_tag = "instruments" if instruments_only else "full"
+    output_name = f"{input_name}_{mode_tag}_{prompt_input_a.prompt.replace(' ', '_')}"
     streamlit_util.display_and_download_audio(combined_segment, output_name, extension=extension)
 
 
@@ -467,3 +546,12 @@ def scale_image_to_32_stride(image: Image.Image) -> Image.Image:
     closest_width = int(np.ceil(image.width / 32) * 32)
     closest_height = int(np.ceil(image.height / 32) * 32)
     return image.resize((closest_width, closest_height), Image.BICUBIC)
+
+
+def split_audio_for_instruments(
+    segment: pydub.AudioSegment, device: str = "cpu"
+) -> T.Dict[str, pydub.AudioSegment]:
+    """
+    Split into htdemucs stems. Always prefer CPU for Demucs reliability.
+    """
+    return split_audio(segment, model_name="htdemucs", extension="wav", device=device)
