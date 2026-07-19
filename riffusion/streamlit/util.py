@@ -323,7 +323,7 @@ def load_magic_mix_pipeline(
     return pipeline
 
 
-@st.cache
+@st.cache_data
 def run_img2img_magic_mix(
     prompt: str,
     init_image: Image.Image,
@@ -359,7 +359,7 @@ def run_img2img_magic_mix(
         )
 
 
-@st.cache
+@st.cache_data
 def run_img2img(
     prompt: str,
     init_image: Image.Image,
@@ -371,7 +371,7 @@ def run_img2img(
     checkpoint: str = DEFAULT_CHECKPOINT,
     device: str = "cuda",
     scheduler: str = SCHEDULER_OPTIONS[0],
-    progress_callback: T.Optional[T.Callable[[float], T.Any]] = None,
+    _progress_callback: T.Optional[T.Callable[[float], T.Any]] = None,
 ) -> Image.Image:
     with pipeline_lock():
         pipeline = load_stable_diffusion_img2img_pipeline(
@@ -386,23 +386,39 @@ def run_img2img(
         num_expected_steps = max(int(num_inference_steps * denoising_strength), 1)
 
         def callback(step: int, tensor: torch.Tensor, foo: T.Any) -> None:
-            if progress_callback is not None:
-                progress_callback(step / num_expected_steps)
+            if _progress_callback is not None:
+                _progress_callback(step / num_expected_steps)
 
-        result = pipeline(
-            prompt=prompt,
-            image=init_image,
-            strength=denoising_strength,
-            num_inference_steps=num_inference_steps,
-            guidance_scale=guidance_scale,
-            negative_prompt=negative_prompt or None,
-            num_images_per_prompt=1,
-            generator=generator,
-            callback=callback,
-            callback_steps=1,
-        )
+        # diffusers 0.9 uses init_image=; newer versions use image=
+        try:
+            result = pipeline(
+                prompt=prompt,
+                init_image=init_image,
+                strength=denoising_strength,
+                num_inference_steps=num_inference_steps,
+                guidance_scale=guidance_scale,
+                negative_prompt=negative_prompt or None,
+                num_images_per_prompt=1,
+                generator=generator,
+                callback=callback,
+                callback_steps=1,
+            )
+        except TypeError:
+            result = pipeline(
+                prompt=prompt,
+                image=init_image,
+                strength=denoising_strength,
+                num_inference_steps=num_inference_steps,
+                guidance_scale=guidance_scale,
+                negative_prompt=negative_prompt or None,
+                num_images_per_prompt=1,
+                generator=generator,
+                callback=callback,
+                callback_steps=1,
+            )
 
-        return result.images[0]
+        images = result["images"] if isinstance(result, dict) else result.images
+        return images[0]
 
 
 class StreamlitCounter:
@@ -412,15 +428,17 @@ class StreamlitCounter:
 
     def __init__(self, key="_counter"):
         self.key = key
-        if not st.session_state.get(self.key):
+        if self.key not in st.session_state:
             st.session_state[self.key] = 0
 
     def increment(self):
+        if self.key not in st.session_state:
+            st.session_state[self.key] = 0
         st.session_state[self.key] += 1
 
     @property
     def value(self):
-        return st.session_state[self.key]
+        return st.session_state.get(self.key, 0)
 
 
 def display_and_download_audio(

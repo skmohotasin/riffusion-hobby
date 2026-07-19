@@ -293,7 +293,7 @@ def render() -> None:
                 guidance_scale=guidance,
                 negative_prompt=prompt_input_a.negative_prompt,
                 seed=prompt_input_a.seed,
-                progress_callback=progress_callback,
+                _progress_callback=progress_callback,
                 device=device,
                 scheduler=scheduler,
                 checkpoint=checkpoint,
