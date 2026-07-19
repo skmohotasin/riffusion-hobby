@@ -105,7 +105,7 @@ def stitch_clips(
 
 
 def load_img2img(checkpoint: str, device: str, scheduler: str) -> StableDiffusionImg2ImgPipeline:
-    dtype = torch.float32 if device in {"cpu", "mps", "xpu"} else torch.float16
+    dtype = torch.float32 if device in {"cpu", "mps"} else torch.float16
     pipeline = StableDiffusionImg2ImgPipeline.from_pretrained(
         checkpoint,
         revision="main",
@@ -115,6 +115,8 @@ def load_img2img(checkpoint: str, device: str, scheduler: str) -> StableDiffusio
     pipeline.safety_checker = None
     if hasattr(pipeline, "feature_extractor"):
         pipeline.feature_extractor = None
+    if hasattr(pipeline, "unet") and hasattr(pipeline.unet, "config"):
+        pipeline.unet.config.sample_size = 64
     pipeline.scheduler = get_scheduler(scheduler, config=pipeline.scheduler.config)
     return pipeline
 

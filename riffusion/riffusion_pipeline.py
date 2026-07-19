@@ -101,6 +101,9 @@ class RiffusionPipeline(DiffusionPipeline):
             cache_dir=cache_dir,
         ).to(device)
 
+        if hasattr(pipeline, "unet") and hasattr(pipeline.unet, "config"):
+            pipeline.unet.config.sample_size = 64
+
         if channels_last:
             pipeline.unet.to(memory_format=torch.channels_last)
 

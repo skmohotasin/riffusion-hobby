@@ -35,6 +35,21 @@ SCHEDULER_OPTIONS = [
 ]
 
 
+def patch_unet_sample_size(pipeline: T.Any, sample_size: int = 64) -> None:
+    """
+    Riffusion's published unet/config.json still has sample_size=32, which triggers
+    a diffusers FutureWarning. SD v1 checkpoints expect 64.
+    """
+    unet = getattr(pipeline, "unet", None)
+    if unet is None:
+        return
+    try:
+        if hasattr(unet, "config") and getattr(unet.config, "sample_size", None) != sample_size:
+            unet.config.sample_size = sample_size
+    except Exception:
+        pass
+
+
 def free_gpu_memory() -> None:
     """
     Drop cached models and release GPU / XPU memory as far as possible.
@@ -105,7 +120,7 @@ def load_stable_diffusion_pipeline(
 
     TODO(hayk): Merge this into RiffusionPipeline to just load one model.
     """
-    if device == "cpu" or device.lower().startswith("mps") or device == "xpu":
+    if device == "cpu" or device.lower().startswith("mps"):
         print(f"WARNING: Falling back to float32 on {device}, float16 is unsupported")
         dtype = torch.float32
 
@@ -118,6 +133,7 @@ def load_stable_diffusion_pipeline(
     pipeline.safety_checker = None
     if hasattr(pipeline, "feature_extractor"):
         pipeline.feature_extractor = None
+    patch_unet_sample_size(pipeline)
 
     pipeline.scheduler = get_scheduler(scheduler, config=pipeline.scheduler.config)
 
@@ -170,14 +186,14 @@ def load_stable_diffusion_img2img_pipeline(
     device: str = "cuda",
     dtype: torch.dtype = torch.float16,
     scheduler: str = SCHEDULER_OPTIONS[0],
-    _cache_bust: int = 3,
+    _cache_bust: int = 5,
 ) -> StableDiffusionImg2ImgPipeline:
     """
     Load the image to image pipeline.
 
     TODO(hayk): Merge this into RiffusionPipeline to just load one model.
     """
-    if device == "cpu" or device.lower().startswith("mps") or device == "xpu":
+    if device == "cpu" or device.lower().startswith("mps"):
         print(f"WARNING: Falling back to float32 on {device}, float16 is unsupported")
         dtype = torch.float32
 
@@ -191,6 +207,7 @@ def load_stable_diffusion_img2img_pipeline(
     pipeline.safety_checker = None
     if hasattr(pipeline, "feature_extractor"):
         pipeline.feature_extractor = None
+    patch_unet_sample_size(pipeline)
 
     pipeline.scheduler = get_scheduler(scheduler, config=pipeline.scheduler.config)
 
@@ -371,6 +388,7 @@ def load_magic_mix_pipeline(
         custom_pipeline="magic_mix",
     ).to(device)
 
+    patch_unet_sample_size(pipeline)
     pipeline.scheduler = get_scheduler(scheduler, pipeline.scheduler.config)
 
     return pipeline

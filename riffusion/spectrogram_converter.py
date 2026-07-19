@@ -43,11 +43,7 @@ class SpectrogramConverter:
             )
             self.device = "cpu"
         elif device.lower().startswith("xpu"):
-            # Keep spectrogram math on CPU for broader torchaudio op coverage on Intel GPUs.
-            warnings.warn(
-                "WARNING: Using CPU for spectrogram audio ops with XPU diffusion device",
-                stacklevel=2,
-            )
+            # Spectrogram / Griffin-Lim stay on CPU; diffusion still uses XPU.
             self.device = "cpu"
 
         # https://pytorch.org/audio/stable/generated/torchaudio.transforms.Spectrogram.html
